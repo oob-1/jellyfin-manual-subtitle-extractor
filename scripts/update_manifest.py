@@ -18,14 +18,13 @@ plugin_version = '.'.join(parts[:4])
 
 zip_bytes = Path(zip_path).read_bytes()
 checksum = hashlib.md5(zip_bytes).hexdigest()  # Jellyfin repository manifests use MD5 here.
-owner = repository.split('/', 1)[0]
 release_tag = 'v' + version
 source_url = f"https://github.com/{repository}/releases/download/{release_tag}/manual-subtitle-extract-v{version}.zip"
 
 manifest_path = Path('manifest.json')
 manifest = json.loads(manifest_path.read_text())
 entry = manifest[0]
-entry['owner'] = owner
+entry['owner'] = "Basim Alasmari (oob-1)"
 versions = entry.setdefault('versions', [])
 versions = [v for v in versions if v.get('version') != plugin_version]
 versions.insert(0, {
