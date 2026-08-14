@@ -15,30 +15,6 @@
         "checksum": "dc53a9ac888f4207713c140edd54cfba",
         "timestamp": "2026-08-14T08:18:26.280501Z"
       },
-      {
-        "version": "0.1.6.0",
-        "changelog": "Release v0.1.6",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/oob-1/jellyfin-manual-subtitle-extractor/releases/download/v0.1.6/manual-subtitle-extract-0.1.6.zip",
-        "checksum": "497e890ddf69bc884b236e87eb9c63c8",
-        "timestamp": "2026-08-14T08:02:52.154031Z"
-      },
-      {
-        "version": "0.1.5.0",
-        "changelog": "Release v0.1.5",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/oob-1/jellyfin-manual-subtitle-extractor/releases/download/v0.1.5/manual-subtitle-extract-v0.1.5.zip",
-        "checksum": "af34eccc67569c31d2b54e827d541ec4",
-        "timestamp": "2026-08-14T07:48:17.295132Z"
-      },
-      {
-        "version": "0.1.4.0",
-        "changelog": "Release v0.1.4",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/oob-1/jellyfin-manual-subtitle-extractor/releases/download/v0.1.4/manual-subtitle-extract-v0.1.4.zip",
-        "checksum": "e88f2fff1d2eb2b795e6481eb31500ff",
-        "timestamp": "2026-08-14T07:43:23.354977Z"
-      }
     ]
   }
 ]
