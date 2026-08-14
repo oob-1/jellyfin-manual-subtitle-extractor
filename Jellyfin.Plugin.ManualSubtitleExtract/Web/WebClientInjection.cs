@@ -11,7 +11,9 @@ public static class WebClientInjection
     public static bool IsWebIndexPath(string? path)
     {
         if (string.IsNullOrEmpty(path)) return true;
-        return path.EndsWith("/", StringComparison.Ordinal) || path.EndsWith("/index.html", StringComparison.OrdinalIgnoreCase);
+        return path.EndsWith("/", StringComparison.Ordinal)
+            || path.EndsWith("/index.html", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith("/web", StringComparison.OrdinalIgnoreCase);
     }
 
     public static string? TryReadIndex(string? webPath)
