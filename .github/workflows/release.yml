@@ -1,9 +1,9 @@
-name: Build and release Jellyfin plugin
+name: Release plugin
 
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
@@ -11,6 +11,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout tag
         uses: actions/checkout@v4
@@ -20,40 +21,95 @@ jobs:
       - name: Setup .NET 9
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: "9.0.x"
+
+      - name: Get version from tag
+        id: version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "assembly_version=${VERSION}.0" >> "$GITHUB_OUTPUT"
+
+          echo "Building version: $VERSION"
+          echo "Assembly version: ${VERSION}.0"
+
+      - name: Restore
+        run: |
+          dotnet restore \
+            Jellyfin.Plugin.ManualSubtitleExtract/Jellyfin.Plugin.ManualSubtitleExtract.csproj
 
       - name: Build
-        run: dotnet publish Jellyfin.Plugin.ManualSubtitleExtract/Jellyfin.Plugin.ManualSubtitleExtract.csproj -c Release -o publish
+        run: |
+          dotnet publish \
+            Jellyfin.Plugin.ManualSubtitleExtract/Jellyfin.Plugin.ManualSubtitleExtract.csproj \
+            --configuration Release \
+            --no-restore \
+            -p:Version="${{ steps.version.outputs.version }}" \
+            -p:AssemblyVersion="${{ steps.version.outputs.assembly_version }}" \
+            -p:FileVersion="${{ steps.version.outputs.assembly_version }}" \
+            -p:InformationalVersion="${{ steps.version.outputs.version }}" \
+            --output ./publish
 
       - name: Package
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          mkdir package
+          VERSION="${{ steps.version.outputs.version }}"
+          ZIP="manual-subtitle-extract-${VERSION}.zip"
+
+          mkdir -p package
+
           cp publish/Jellyfin.Plugin.ManualSubtitleExtract.dll package/
-          if [ -f publish/Jellyfin.Plugin.ManualSubtitleExtract.pdb ]; then cp publish/Jellyfin.Plugin.ManualSubtitleExtract.pdb package/; fi
+
+          if [ -f publish/Jellyfin.Plugin.ManualSubtitleExtract.pdb ]; then
+            cp publish/Jellyfin.Plugin.ManualSubtitleExtract.pdb package/
+          fi
+
           cd package
-          zip -9 "../manual-subtitle-extract-v${VERSION}.zip" ./*
+          zip -r "../${ZIP}" .
+          cd ..
+
+          echo "Created ${ZIP}"
+          ls -lh "${ZIP}"
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          gh release create "$GITHUB_REF_NAME" \
-            "manual-subtitle-extract-v${VERSION}.zip" \
-            --title "Manual Subtitle Extract $GITHUB_REF_NAME" \
+          VERSION="${{ steps.version.outputs.version }}"
+          ZIP="manual-subtitle-extract-${VERSION}.zip"
+
+          gh release create "${GITHUB_REF_NAME}" \
+            "${ZIP}" \
+            --title "Manual Subtitle Extract ${GITHUB_REF_NAME}" \
             --generate-notes
 
       - name: Update plugin repository manifest on master
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          ZIP="manual-subtitle-extract-v${VERSION}.zip"
+          VERSION="${{ steps.version.outputs.version }}"
+          ZIP="manual-subtitle-extract-${VERSION}.zip"
+
+          git fetch origin master
           git switch master
-          python scripts/update_manifest.py "$VERSION" "$ZIP" "$GITHUB_REPOSITORY"
+          git reset --hard origin/master
+
+          python scripts/update_manifest.py \
+            "$VERSION" \
+            "$ZIP" \
+            "$GITHUB_REPOSITORY"
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add manifest.json
-          git commit -m "chore: publish $GITHUB_REF_NAME manifest" || exit 0
+
+          if git diff --cached --quiet; then
+            echo "Manifest did not change."
+            exit 0
+          fi
+
+          git commit -m "chore: publish ${GITHUB_REF_NAME} manifest"
           git push origin master
