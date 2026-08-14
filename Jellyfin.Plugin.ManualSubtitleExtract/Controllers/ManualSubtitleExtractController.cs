@@ -1,139 +1,215 @@
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 using Jellyfin.Plugin.ManualSubtitleExtract.Models;
 using Jellyfin.Plugin.ManualSubtitleExtract.Services;
+using MediaBrowser.Common.Api;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Providers;
+using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.IO;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.ManualSubtitleExtract.Controllers;
 
 [ApiController]
-[Authorize]
 [Route("ManualSubtitleExtract")]
-public class ManualSubtitleExtractController : ControllerBase
+[Authorize(Policy = Policies.RequiresElevation)]
+public sealed class ManualSubtitleExtractController : ControllerBase
 {
-    private readonly SubtitleProbeService _probeService;
-    private readonly SubtitleExtractService _extractService;
+    private readonly ILibraryManager _libraryManager;
+    private readonly SubtitleProbeService _probe;
+    private readonly SubtitleExtractService _extract;
+    private readonly IProviderManager _providerManager;
+    private readonly IFileSystem _fileSystem;
+    private readonly ILogger<ManualSubtitleExtractController> _logger;
 
     public ManualSubtitleExtractController(
-        SubtitleProbeService probeService,
-        SubtitleExtractService extractService)
+        ILibraryManager libraryManager,
+        SubtitleProbeService probe,
+        SubtitleExtractService extract,
+        IProviderManager providerManager,
+        IFileSystem fileSystem,
+        ILogger<ManualSubtitleExtractController> logger)
     {
-        _probeService = probeService;
-        _extractService = extractService;
+        _libraryManager = libraryManager;
+        _probe = probe;
+        _extract = extract;
+        _providerManager = providerManager;
+        _fileSystem = fileSystem;
+        _logger = logger;
     }
 
     /// <summary>
-    /// Returns the embedded subtitle streams for a Jellyfin item.
+    /// Returns all embedded subtitle tracks for a Jellyfin movie or episode.
     /// </summary>
-    /// <param name="itemId">Jellyfin movie/episode item ID.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Embedded subtitle tracks.</returns>
     [HttpGet("{itemId:guid}/tracks")]
-    [ProducesResponseType(typeof(IReadOnlyList<SubtitleTrackDto>), 200)]
-    [ProducesResponseType(400)]
-    [ProducesResponseType(401)]
-    [ProducesResponseType(404)]
-    [ProducesResponseType(500)]
+    [ProducesResponseType(
+        typeof(IReadOnlyList<SubtitleTrackDto>),
+        StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<ActionResult<IReadOnlyList<SubtitleTrackDto>>> GetTracks(
-        Guid itemId,
+        [FromRoute] Guid itemId,
         CancellationToken cancellationToken)
     {
         if (itemId == Guid.Empty)
         {
-            return BadRequest("A valid Jellyfin item ID is required.");
+            return BadRequest(new
+            {
+                error = "A valid Jellyfin item ID is required."
+            });
         }
 
         try
         {
-            var tracks = await _probeService
-                .GetTracksAsync(itemId, cancellationToken)
+            var item = GetLocalItem(itemId);
+
+            var tracks = await _probe
+                .GetTracksAsync(
+                    item.Path,
+                    cancellationToken)
                 .ConfigureAwait(false);
 
             return Ok(tracks);
         }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(ex.Message);
-        }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(ex.Message);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return StatusCode(500, new
+            return NotFound(new
             {
                 error = ex.Message
             });
         }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Could not inspect subtitle tracks for Jellyfin item {ItemId}",
+                itemId);
+
+            return BadRequest(new
+            {
+                error = ex.Message
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Unexpected error while inspecting subtitles for Jellyfin item {ItemId}",
+                itemId);
+
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                new
+                {
+                    error = "Unexpected error while reading embedded subtitles."
+                });
+        }
     }
 
     /// <summary>
-    /// Extracts one embedded subtitle stream as an external sidecar subtitle.
+    /// Extracts one embedded text subtitle stream to an external SRT file.
     /// </summary>
-    /// <param name="itemId">Jellyfin movie/episode item ID.</param>
-    /// <param name="request">Extraction request.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Extraction result.</returns>
     [HttpPost("{itemId:guid}/extract")]
-    [ProducesResponseType(typeof(ExtractSubtitleResult), 200)]
-    [ProducesResponseType(400)]
-    [ProducesResponseType(401)]
-    [ProducesResponseType(404)]
-    [ProducesResponseType(409)]
-    [ProducesResponseType(500)]
+    [ProducesResponseType(typeof(ExtractSubtitleResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<ActionResult<ExtractSubtitleResult>> Extract(
-        Guid itemId,
+        [FromRoute] Guid itemId,
         [FromBody] ExtractSubtitleRequest request,
         CancellationToken cancellationToken)
     {
         if (itemId == Guid.Empty)
         {
-            return BadRequest("A valid Jellyfin item ID is required.");
+            return BadRequest(new
+            {
+                error = "A valid Jellyfin item ID is required."
+            });
         }
 
         if (request is null)
         {
-            return BadRequest("Missing extraction request.");
+            return BadRequest(new
+            {
+                error = "Missing extraction request."
+            });
         }
 
         if (request.StreamIndex < 0)
         {
-            return BadRequest("Subtitle stream index cannot be negative.");
+            return BadRequest(new
+            {
+                error = "Subtitle stream index cannot be negative."
+            });
         }
 
         try
         {
-            var result = await _extractService
+            var item = GetLocalItem(itemId);
+
+            var result = await _extract
                 .ExtractAsync(
-                    itemId,
+                    item.Path,
                     request.StreamIndex,
+                    request.Overwrite,
                     cancellationToken)
                 .ConfigureAwait(false);
 
+            _logger.LogInformation(
+                "Extracted subtitle stream {StreamIndex} from {MediaPath} to {OutputPath}",
+                request.StreamIndex,
+                item.Path,
+                result.OutputPath);
+
+            // Refresh the Jellyfin item so the new external subtitle
+            // becomes visible without requiring a full library scan.
+            _providerManager.QueueRefresh(
+                item.Id,
+                new MetadataRefreshOptions(
+                    new DirectoryService(_fileSystem)),
+                RefreshPriority.High);
+
             return Ok(result);
-        }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(ex.Message);
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(ex.Message);
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return StatusCode(403, new
+            return NotFound(new
             {
                 error = ex.Message
             });
         }
-        catch (System.IO.
-IOException ex)
+        catch (ArgumentException ex)
         {
+            return BadRequest(new
+            {
+                error = ex.Message
+            });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Jellyfin cannot write subtitle for item {ItemId}",
+                itemId);
+
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                new
+                {
+                    error = "Jellyfin does not have permission to write to the media directory.",
+                    details = ex.Message
+                });
+        }
+        catch (IOException ex)
+        {
+            // Usually means a subtitle with the same filename
+            // already exists and overwrite is disabled.
             return Conflict(new
             {
                 error = ex.Message
@@ -141,10 +217,58 @@ IOException ex)
         }
         catch (InvalidOperationException ex)
         {
-            return StatusCode(500, new
+            _logger.LogWarning(
+                ex,
+                "Subtitle extraction failed for Jellyfin item {ItemId}",
+                itemId);
+
+            return BadRequest(new
             {
                 error = ex.Message
             });
         }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Unexpected error while extracting subtitle for Jellyfin item {ItemId}",
+                itemId);
+
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                new
+                {
+                    error = "Unexpected error while extracting the subtitle."
+                });
+        }
+    }
+
+    /// <summary>
+    /// Finds the Jellyfin item and validates that it points to a real
+    /// local media file accessible by the Jellyfin process/container.
+    /// </summary>
+    private BaseItem GetLocalItem(Guid itemId)
+    {
+        var item = _libraryManager.GetItemById(itemId);
+
+        if (item is null)
+        {
+            throw new KeyNotFoundException(
+                $"Jellyfin item '{itemId}' was not found.");
+        }
+
+        if (string.IsNullOrWhiteSpace(item.Path))
+        {
+throw new InvalidOperationException(
+                "This Jellyfin item does not have a local media path.");
+        }
+
+        if (!System.IO.File.Exists(item.Path))
+        {
+            throw new InvalidOperationException(
+                $"The media file does not exist or Jellyfin cannot access it: {item.Path}");
+        }
+
+        return item;
     }
 }
