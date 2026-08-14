@@ -21,15 +21,25 @@ public static class WebClientInjection
         return File.Exists(path) ? File.ReadAllText(path) : null;
     }
 
-    public static string GetWebBasePath(string requestPath)
+    public static string GetClientScriptUrl(string? pathBase)
     {
-        if (requestPath.EndsWith("index.html", StringComparison.OrdinalIgnoreCase))
+        var basePath = pathBase ?? string.Empty;
+        if (basePath.Length == 0)
         {
-            requestPath = requestPath[..^"index.html".Length];
+            return "/ManualSubtitleExtract/client.js";
         }
 
-        if (!requestPath.EndsWith('/')) requestPath += "/";
-        return requestPath;
+        if (!basePath.StartsWith('/'))
+        {
+            basePath = "/" + basePath;
+        }
+
+        if (basePath.EndsWith('/'))
+        {
+            basePath = basePath.TrimEnd('/');
+        }
+
+        return $"{basePath}/ManualSubtitleExtract/client.js";
     }
 
     public static string? Inject(string html, string basePath)
@@ -39,7 +49,7 @@ public static class WebClientInjection
         var index = html.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
         if (index < 0) return null;
 
-        var script = $"<script id=\"{Marker}\" src=\"{basePath}ManualSubtitleExtract/client.js\"></script>";
+        var script = $"<script id=\"{Marker}\" src=\"{basePath}\"></script>";
         return html.Insert(index, script);
     }
 }
