@@ -8,6 +8,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "0.1.16.0",
+        "changelog": "Release v0.1.16",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/oob-1/jellyfin-manual-subtitle-extractor/releases/download/v0.1.16/manual-subtitle-extract-0.1.16.zip",
+        "checksum": "ef4d41f60cf912dd3771f0f8faa70dff",
+        "timestamp": "2026-08-14T10:03:34.560513Z"
+      },
+      {
         "version": "0.1.15.0",
         "changelog": "Release v0.1.15",
         "targetAbi": "10.11.0.0",
