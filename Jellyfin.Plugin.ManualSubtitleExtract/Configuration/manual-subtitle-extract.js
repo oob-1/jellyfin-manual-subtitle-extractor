@@ -6,23 +6,61 @@
 
     const ACTION_ID = 'manualSubtitleExtractAction';
     const OVERLAY_ID = 'manualSubtitleExtractOverlay';
+    const LOG_PREFIX = '[manual-subtitle-extract]';
+
+    window.__manualSubtitleExtractState = {
+        loadedAt: new Date().toISOString(),
+        scans: 0,
+        menusFound: 0,
+        actionsAdded: 0,
+        lastItemId: null
+    };
+
+    console.info(LOG_PREFIX, 'client loaded');
 
     function currentItemId() {
         const sources = [window.location.href, window.location.hash, window.location.search];
         for (const source of sources) {
             if (!source) continue;
-            const match = source.match(/[?&#]id=([0-9a-fA-F-]{32,36})/);
-            if (match) return match[1];
+            const match = source.match(/[?&#]id=([0-9a-fA-F-]{32,36})/i);
+            if (match) return normalizeItemId(match[1]);
         }
 
         return null;
+    }
+
+    function normalizeItemId(value) {
+        if (!value) return null;
+        const match = String(value).match(/[0-9a-fA-F]{32}|[0-9a-fA-F-]{36}/);
+        return match ? match[0] : null;
+    }
+
+    function itemIdFromElement(element) {
+        let current = element;
+        const attributes = ['data-id', 'data-itemid', 'data-item-id'];
+        while (current && current !== document.documentElement) {
+            for (const attribute of attributes) {
+                const itemId = normalizeItemId(current.getAttribute && current.getAttribute(attribute));
+                if (itemId) return itemId;
+            }
+
+            current = current.parentElement;
+        }
+
+        return null;
+    }
+
+    function basePathFromLocation() {
+        const path = window.location.pathname || '';
+        const match = path.match(/^(.*?)(?:\/web(?:\/|$)|\/?$)/i);
+        return match && match[1] ? match[1].replace(/\/$/, '') : '';
     }
 
     function apiUrl(path) {
         if (window.ApiClient && typeof ApiClient.getUrl === 'function') {
             return ApiClient.getUrl(path);
         }
-        return path;
+        return `${basePathFromLocation()}/${path.replace(/^\//, '')}`;
     }
 
     async function apiRequest(path, options) {
@@ -183,21 +221,17 @@
         }
     }
 
-    function addActionToMenu(menu) {
-        if (!menu || menu.querySelector('#' + ACTION_ID)) return;
-        const itemId = currentItemId();
-        if (!itemId) return;
+    function isVisible(element) {
+        return !!(element && (element.offsetParent || element.getClientRects().length));
+    }
 
-        const sample = menu.querySelector('button');
-        if (!sample) return;
+    function menuItems(menu) {
+        return Array.from(menu.querySelectorAll('button, [role="menuitem"], .actionSheetMenuItem, .MuiMenuItem-root'))
+            .filter(item => item.id !== ACTION_ID && isVisible(item) && !item.disabled && item.getAttribute('aria-disabled') !== 'true');
+    }
 
-        const button = sample.cloneNode(true);
-        button.id = ACTION_ID;
-        button.removeAttribute('data-id');
-        button.removeAttribute('data-action');
-        button.setAttribute('title', 'Extract Embedded Subtitle');
-
-        const textNode = button.querySelector('.actionSheetItemText, .listItemBodyText, .button-text, span:last-child');
+    function setActionLabel(button) {
+        const textNode = button.querySelector('.actionSheetItemText, .listItemBodyText, .button-text, .MuiListItemText-primary, span:last-child');
         if (textNode) {
             textNode.textContent = 'Extract Embedded Subtitle';
         } else {
@@ -206,21 +240,66 @@
 
         const icon = button.querySelector('.material-icons, .material-symbols-rounded, .material-symbols-outlined');
         if (icon) icon.textContent = 'subtitles';
+    }
+
+    function addActionToMenu(menu) {
+        if (!menu || menu.querySelector('#' + ACTION_ID)) return;
+        if (menu.closest && menu.closest('#' + OVERLAY_ID)) return;
+        const itemId = currentItemId() || itemIdFromElement(menu);
+        window.__manualSubtitleExtractState.lastItemId = itemId;
+        if (!itemId) return;
+
+        const sample = menuItems(menu)[0];
+        if (!sample) return;
+
+        const button = sample.cloneNode(true);
+        button.removeAttribute('id');
+        button.id = ACTION_ID;
+        button.removeAttribute('data-id');
+        button.removeAttribute('data-itemid');
+        button.removeAttribute('data-item-id');
+        button.removeAttribute('data-action');
+        button.removeAttribute('disabled');
+        button.removeAttribute('aria-disabled');
+        button.removeAttribute('href');
+        button.setAttribute('title', 'Extract Embedded Subtitle');
+        if (button.tagName === 'BUTTON') {
+            button.type = 'button';
+        } else {
+            button.setAttribute('role', 'menuitem');
+            button.setAttribute('tabindex', '0');
+        }
+
+        setActionLabel(button);
 
         button.addEventListener('click', function (e) {
             e.preventDefault();
             e.stopPropagation();
             openDialog(itemId);
         });
+        button.addEventListener('keydown', function (e) {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            e.preventDefault();
+            openDialog(itemId);
+        });
 
         menu.appendChild(button);
+        window.__manualSubtitleExtractState.actionsAdded += 1;
+        console.info(LOG_PREFIX, 'added action menu item', itemId);
     }
 
     function scan() {
-        const menus = document.querySelectorAll('.actionSheet, .actionSheetContent, .actionsheet, [role="dialog"] .actionSheetMenuItem');
-        menus.forEach(node => {
-            const menu = node.matches && node.matches('.actionSheetMenuItem') ? node.parentElement : node;
-            if (menu && menu.querySelector && menu.querySelector('button')) addActionToMenu(menu);
+        window.__manualSubtitleExtractState.scans += 1;
+        const menus = new Set();
+        document.querySelectorAll('.actionSheet, .actionSheetContent, .actionsheet, [role="menu"], [role="dialog"] .actionSheetMenuItem, [role="dialog"] [role="menuitem"], .MuiPopover-root, .MuiMenu-paper, .MuiMenu-list, .actionSheetMenuItem, .MuiMenuItem-root').forEach(node => {
+            if (!node.matches) return;
+            const menu = node.matches('.actionSheetMenuItem, .MuiMenuItem-root') ? node.parentElement : node;
+            if (menu && menu.querySelector) menus.add(menu);
+        });
+
+        window.__manualSubtitleExtractState.menusFound = menus.size;
+        menus.forEach(menu => {
+            if (menuItems(menu).length) addActionToMenu(menu);
         });
     }
 

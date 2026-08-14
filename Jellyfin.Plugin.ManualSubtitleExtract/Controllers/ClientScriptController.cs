@@ -22,6 +22,7 @@ public sealed class ClientScriptController : ControllerBase
         }
 
         using var reader = new StreamReader(stream);
+        Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
         return Content(reader.ReadToEnd(), "application/javascript");
     }
 }

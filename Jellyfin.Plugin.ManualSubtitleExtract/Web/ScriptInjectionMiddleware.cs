@@ -53,7 +53,11 @@ public sealed class ScriptInjectionMiddleware
             return;
         }
 
-        var injected = WebClientInjection.Inject(html, WebClientInjection.GetClientScriptUrl(context.Request.PathBase.Value));
+        var injected = WebClientInjection.Inject(
+            html,
+            WebClientInjection.GetClientScriptUrl(
+                context.Request.PathBase.Value,
+                context.Request.Path.Value));
         if (injected is null)
         {
             await _next(context).ConfigureAwait(false);
