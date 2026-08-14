@@ -52,7 +52,7 @@ public static class WebClientInjection
             }
         }
 
-        return rawPath.EndsWith('/', StringComparison.Ordinal) ? NormalizeBasePath(rawPath) : string.Empty;
+        return rawPath.EndsWith("/", StringComparison.Ordinal) ? NormalizeBasePath(rawPath) : string.Empty;
     }
 
     private static string NormalizeBasePath(string? path)
