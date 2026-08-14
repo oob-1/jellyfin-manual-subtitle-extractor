@@ -7,6 +7,8 @@
     const ACTION_ID = 'manualSubtitleExtractAction';
     const OVERLAY_ID = 'manualSubtitleExtractOverlay';
     const LOG_PREFIX = '[manual-subtitle-extract]';
+    const SUPPORTED_ITEM_TYPES = ['Movie', 'Episode', 'Video', 'MusicVideo'];
+    let pendingMenuContext = null;
 
     window.__manualSubtitleExtractState = {
         loadedAt: new Date().toISOString(),
@@ -19,11 +21,14 @@
     console.info(LOG_PREFIX, 'client loaded');
 
     function currentItemId() {
-        const sources = [window.location.href, window.location.hash, window.location.search];
+        const sources = [window.location.href, window.location.hash, window.location.search, window.location.pathname];
         for (const source of sources) {
             if (!source) continue;
             const match = source.match(/[?&#]id=([0-9a-fA-F-]{32,36})/i);
             if (match) return normalizeItemId(match[1]);
+
+            const pathMatch = source.match(/details\/([0-9a-fA-F-]{32,36})/i);
+            if (pathMatch) return normalizeItemId(pathMatch[1]);
         }
 
         return null;
@@ -33,21 +38,6 @@
         if (!value) return null;
         const match = String(value).match(/[0-9a-fA-F]{32}|[0-9a-fA-F-]{36}/);
         return match ? match[0] : null;
-    }
-
-    function itemIdFromElement(element) {
-        let current = element;
-        const attributes = ['data-id', 'data-itemid', 'data-item-id'];
-        while (current && current !== document.documentElement) {
-            for (const attribute of attributes) {
-                const itemId = normalizeItemId(current.getAttribute && current.getAttribute(attribute));
-                if (itemId) return itemId;
-            }
-
-            current = current.parentElement;
-        }
-
-        return null;
     }
 
     function basePathFromLocation() {
@@ -82,6 +72,70 @@
         });
         if (!response.ok) throw new Error(await response.text());
         return response.status === 204 ? null : response.json();
+    }
+
+    function currentUserId() {
+        if (window.ApiClient && typeof ApiClient.getCurrentUserId === 'function') {
+            return ApiClient.getCurrentUserId();
+        }
+
+        return null;
+    }
+
+    async function lookUpItem(itemId) {
+        if (!itemId) return null;
+        if (!window.ApiClient || typeof ApiClient.getItem !== 'function') {
+            return { id: itemId, type: null, name: null };
+        }
+
+        const userId = currentUserId();
+        if (!userId) {
+            return { id: itemId, type: null, name: null };
+        }
+
+        try {
+            const item = await ApiClient.getItem(userId, itemId);
+            return {
+                id: normalizeItemId(item.Id || item.id) || itemId,
+                type: item.Type || item.type || null,
+                name: item.Name || item.name || null
+            };
+        } catch (error) {
+            console.warn(LOG_PREFIX, 'could not look up item', itemId, error);
+            return { id: itemId, type: null, name: null };
+        }
+    }
+
+    function rememberMenuContextFromClick(event) {
+        if (!event.target || !event.target.closest) return;
+
+        const menuButton = event.target.closest('[data-action="menu"], [aria-label*="More"], [title*="More"], [aria-label*="more"], [title*="more"]');
+        if (!menuButton) return;
+
+        const itemElement = menuButton.closest('.card[data-id], .listItem[data-id], [data-id][data-type], [data-id][data-name]');
+        if (!itemElement) return;
+
+        const itemId = normalizeItemId(itemElement.getAttribute('data-id'));
+        if (!itemId) return;
+
+        pendingMenuContext = {
+            id: itemId,
+            type: itemElement.getAttribute('data-type'),
+            name: itemElement.getAttribute('data-name'),
+            timestamp: Date.now()
+        };
+    }
+
+    async function resolveMenuContext() {
+        if (pendingMenuContext && Date.now() - pendingMenuContext.timestamp < 2000) {
+            if (pendingMenuContext.type && pendingMenuContext.name) {
+                return pendingMenuContext;
+            }
+
+            return lookUpItem(pendingMenuContext.id);
+        }
+
+        return lookUpItem(currentItemId());
     }
 
     function escapeHtml(value) {
@@ -221,91 +275,84 @@
         }
     }
 
-    function isVisible(element) {
-        return !!(element && (element.offsetParent || element.getClientRects().length));
-    }
-
-    function menuItems(menu) {
-        return Array.from(menu.querySelectorAll('button, [role="menuitem"], .actionSheetMenuItem, .MuiMenuItem-root'))
-            .filter(item => item.id !== ACTION_ID && isVisible(item) && !item.disabled && item.getAttribute('aria-disabled') !== 'true');
-    }
-
-    function setActionLabel(button) {
-        const textNode = button.querySelector('.actionSheetItemText, .listItemBodyText, .button-text, .MuiListItemText-primary, span:last-child');
-        if (textNode) {
-            textNode.textContent = 'Extract Embedded Subtitle';
-        } else {
-            button.textContent = 'Extract Embedded Subtitle';
-        }
-
-        const icon = button.querySelector('.material-icons, .material-symbols-rounded, .material-symbols-outlined');
-        if (icon) icon.textContent = 'subtitles';
-    }
-
-    function addActionToMenu(menu) {
-        if (!menu || menu.querySelector('#' + ACTION_ID)) return;
-        if (menu.closest && menu.closest('#' + OVERLAY_ID)) return;
-        const itemId = currentItemId() || itemIdFromElement(menu);
-        window.__manualSubtitleExtractState.lastItemId = itemId;
-        if (!itemId) return;
-
-        const sample = menuItems(menu)[0];
-        if (!sample) return;
-
-        const button = sample.cloneNode(true);
-        button.removeAttribute('id');
+    function makeMenuButton(itemId) {
+        const button = document.createElement('button');
         button.id = ACTION_ID;
-        button.removeAttribute('data-id');
-        button.removeAttribute('data-itemid');
-        button.removeAttribute('data-item-id');
-        button.removeAttribute('data-action');
-        button.removeAttribute('disabled');
-        button.removeAttribute('aria-disabled');
-        button.removeAttribute('href');
+        button.setAttribute('is', 'emby-button');
+        button.type = 'button';
+        button.className = 'listItem listItem-button actionSheetMenuItem';
+        button.setAttribute('data-id', 'manual-subtitle-extract');
         button.setAttribute('title', 'Extract Embedded Subtitle');
-        if (button.tagName === 'BUTTON') {
-            button.type = 'button';
-        } else {
-            button.setAttribute('role', 'menuitem');
-            button.setAttribute('tabindex', '0');
-        }
-
-        setActionLabel(button);
+        button.innerHTML =
+            '<span class="actionsheetMenuItemIcon listItemIcon listItemIcon-transparent material-icons subtitles" aria-hidden="true"></span>' +
+            '<div class="listItemBody actionsheetListItemBody">' +
+            '<div class="listItemBodyText actionSheetItemText">Extract Embedded Subtitle</div>' +
+            '</div>';
 
         button.addEventListener('click', function (e) {
             e.preventDefault();
-            e.stopPropagation();
-            openDialog(itemId);
-        });
-        button.addEventListener('keydown', function (e) {
-            if (e.key !== 'Enter' && e.key !== ' ') return;
-            e.preventDefault();
-            openDialog(itemId);
+            window.setTimeout(function () {
+                openDialog(itemId);
+            }, 0);
         });
 
-        menu.appendChild(button);
+        return button;
+    }
+
+    function addActionToSheet(sheet, context) {
+        if (!sheet || sheet.querySelector('#' + ACTION_ID)) return;
+        if (!context || !context.id) return;
+        if (context.type && SUPPORTED_ITEM_TYPES.indexOf(context.type) === -1) {
+            console.info(LOG_PREFIX, 'skipped unsupported item type', context.type);
+            return;
+        }
+
+        const scroller = sheet.querySelector('.actionSheetScroller') || sheet.querySelector('.actionSheetContent') || sheet;
+        scroller.appendChild(makeMenuButton(context.id));
         window.__manualSubtitleExtractState.actionsAdded += 1;
-        console.info(LOG_PREFIX, 'added action menu item', itemId);
+        window.__manualSubtitleExtractState.lastItemId = context.id;
+        console.info(LOG_PREFIX, 'added action menu item', context.id, context.type || 'unknown');
     }
 
-    function scan() {
+    function handleActionSheetOpened(sheet) {
+        if (!sheet || sheet.querySelector('#' + ACTION_ID)) return;
+
+        resolveMenuContext().then(function (context) {
+            if (!context) {
+                console.info(LOG_PREFIX, 'no Jellyfin item context found for action sheet');
+                return;
+            }
+
+            if (document.body.contains(sheet)) {
+                addActionToSheet(sheet, context);
+            }
+        });
+    }
+
+    function startWatchingForActionSheets() {
         window.__manualSubtitleExtractState.scans += 1;
-        const menus = new Set();
-        document.querySelectorAll('.actionSheet, .actionSheetContent, .actionsheet, [role="menu"], [role="dialog"] .actionSheetMenuItem, [role="dialog"] [role="menuitem"], .MuiPopover-root, .MuiMenu-paper, .MuiMenu-list, .actionSheetMenuItem, .MuiMenuItem-root').forEach(node => {
-            if (!node.matches) return;
-            const menu = node.matches('.actionSheetMenuItem, .MuiMenuItem-root') ? node.parentElement : node;
-            if (menu && menu.querySelector) menus.add(menu);
+        document.addEventListener('click', rememberMenuContextFromClick, true);
+
+        const observer = new MutationObserver(function (mutations) {
+            mutations.forEach(function (mutation) {
+                mutation.addedNodes.forEach(function (node) {
+                    if (node.nodeType !== 1) return;
+
+                    const sheet = node.classList && node.classList.contains('actionSheet')
+                        ? node
+                        : (node.querySelector ? node.querySelector('.actionSheet') : null);
+
+                    if (sheet) {
+                        handleActionSheetOpened(sheet);
+                    }
+                });
+            });
         });
 
-        window.__manualSubtitleExtractState.menusFound = menus.size;
-        menus.forEach(menu => {
-            if (menuItems(menu).length) addActionToMenu(menu);
-        });
+        observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
+        document.querySelectorAll('.actionSheet').forEach(handleActionSheetOpened);
+        console.info(LOG_PREFIX, 'watching for action sheets');
     }
 
-    const observer = new MutationObserver(scan);
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-    document.addEventListener('viewshow', scan, true);
-    document.addEventListener('click', () => setTimeout(scan, 50), true);
-    scan();
+    startWatchingForActionSheets();
 })();

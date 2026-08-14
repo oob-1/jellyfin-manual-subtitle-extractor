@@ -55,9 +55,9 @@ public sealed class ScriptInjectionMiddleware
 
         var injected = WebClientInjection.Inject(
             html,
-            WebClientInjection.GetClientScriptUrl(
+            WebClientInjection.GetWebBasePath(
                 context.Request.PathBase.Value,
-                context.Request.Path.Value));
+                context.Request.Path.Value ?? string.Empty));
         if (injected is null)
         {
             await _next(context).ConfigureAwait(false);
