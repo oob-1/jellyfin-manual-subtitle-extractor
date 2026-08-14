@@ -4,9 +4,17 @@
     "name": "Manual Subtitle Extract",
     "overview": "Manually extract a selected embedded text subtitle as an external SRT sidecar from Jellyfin Web.",
     "description": "Adds an Extract Embedded Subtitle action to movie and episode item menus. Choose an embedded text subtitle track in a friendly dialog, convert it to SRT with FFmpeg, save it beside the media file, and refresh the Jellyfin item. No automatic scanning or scheduled extraction.",
-    "owner": "oob-1",
+    "owner": "Basim Alasmari (oob-1)",
     "category": "General",
     "versions": [
+      {
+        "version": "0.1.5.0",
+        "changelog": "Release v0.1.5",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/oob-1/jellyfin-manual-subtitle-extractor/releases/download/v0.1.5/manual-subtitle-extract-v0.1.5.zip",
+        "checksum": "af34eccc67569c31d2b54e827d541ec4",
+        "timestamp": "2026-08-14T07:48:17.295132Z"
+      },
       {
         "version": "0.1.4.0",
         "changelog": "Release v0.1.4",
