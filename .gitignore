@@ -1,0 +1,7 @@
+bin/
+obj/
+publish/
+package/
+*.user
+*.suo
+.DS_Store

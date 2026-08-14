@@ -1,0 +1,11 @@
+[
+  {
+    "guid": "2f5b1b4c-1788-4f8a-a087-c6a4f68b5aa7",
+    "name": "Manual Subtitle Extract",
+    "overview": "Manually extract a selected embedded text subtitle as an external SRT sidecar from Jellyfin Web.",
+    "description": "Adds an Extract Embedded Subtitle action to movie and episode item menus. Choose an embedded text subtitle track in a friendly dialog, convert it to SRT with FFmpeg, save it beside the media file, and refresh the Jellyfin item. No automatic scanning or scheduled extraction.",
+    "owner": "REPLACE_ON_FIRST_RELEASE",
+    "category": "General",
+    "versions": []
+  }
+]

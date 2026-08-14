@@ -1,0 +1,59 @@
+name: Build and release Jellyfin plugin
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Build
+        run: dotnet publish Jellyfin.Plugin.ManualSubtitleExtract/Jellyfin.Plugin.ManualSubtitleExtract.csproj -c Release -o publish
+
+      - name: Package
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir package
+          cp publish/Jellyfin.Plugin.ManualSubtitleExtract.dll package/
+          if [ -f publish/Jellyfin.Plugin.ManualSubtitleExtract.pdb ]; then cp publish/Jellyfin.Plugin.ManualSubtitleExtract.pdb package/; fi
+          cd package
+          zip -9 "../manual-subtitle-extract-v${VERSION}.zip" ./*
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            "manual-subtitle-extract-v${VERSION}.zip" \
+            --title "Manual Subtitle Extract $GITHUB_REF_NAME" \
+            --generate-notes
+
+      - name: Update plugin repository manifest on main
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ZIP="manual-subtitle-extract-v${VERSION}.zip"
+          git switch main
+          python scripts/update_manifest.py "$VERSION" "$ZIP" "$GITHUB_REPOSITORY"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "chore: publish $GITHUB_REF_NAME manifest" || exit 0
+          git push origin main
