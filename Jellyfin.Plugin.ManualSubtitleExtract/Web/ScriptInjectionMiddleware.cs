@@ -1,5 +1,4 @@
 using System.Text;
-using MediaBrowser.Common.Configuration;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -10,16 +9,13 @@ namespace Jellyfin.Plugin.ManualSubtitleExtract.Web;
 public sealed class ScriptInjectionMiddleware
 {
     private readonly RequestDelegate _next;
-    private readonly IApplicationPaths _applicationPaths;
     private readonly ILogger<ScriptInjectionMiddleware> _logger;
 
     public ScriptInjectionMiddleware(
         RequestDelegate next,
-        IApplicationPaths applicationPaths,
         ILogger<ScriptInjectionMiddleware> logger)
     {
         _next = next;
-        _applicationPaths = applicationPaths;
         _logger = logger;
     }
 
@@ -31,47 +27,55 @@ public sealed class ScriptInjectionMiddleware
             return;
         }
 
-        var webPath = WebClientInjection.WebPath;
-        if (webPath is null)
+        var originalBody = context.Response.Body;
+        await using var responseBuffer = new MemoryStream();
+        context.Response.Body = responseBuffer;
+
+        try
         {
-            try
+            await _next(context).ConfigureAwait(false);
+
+            responseBuffer.Position = 0;
+            context.Response.Body = originalBody;
+
+            if (responseBuffer.Length == 0 || !CanInject(context.Response))
             {
-                webPath = _applicationPaths.WebPath;
-                WebClientInjection.WebPath = webPath;
-            }
-            catch (NotSupportedException)
-            {
-                await _next(context).ConfigureAwait(false);
+                await responseBuffer.CopyToAsync(originalBody).ConfigureAwait(false);
                 return;
             }
-        }
 
-        var html = WebClientInjection.TryReadIndex(webPath);
-        if (html is null)
+            using var reader = new StreamReader(responseBuffer, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+            var html = await reader.ReadToEndAsync().ConfigureAwait(false);
+            var injected = WebClientInjection.Inject(
+                html,
+                WebClientInjection.GetWebBasePath(
+                    context.Request.PathBase.Value,
+                    context.Request.Path.Value ?? string.Empty));
+
+            if (injected is null)
+            {
+                var originalBytes = Encoding.UTF8.GetBytes(html);
+                context.Response.ContentLength = originalBytes.Length;
+                await originalBody.WriteAsync(originalBytes).ConfigureAwait(false);
+                return;
+            }
+
+            var bytes = Encoding.UTF8.GetBytes(injected);
+            context.Response.ContentLength = bytes.Length;
+            context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
+            await originalBody.WriteAsync(bytes).ConfigureAwait(false);
+            _logger.LogInformation("Serving the Jellyfin web client with the Manual Subtitle Extract action menu script added");
+        }
+        finally
         {
-            await _next(context).ConfigureAwait(false);
-            return;
+            context.Response.Body = originalBody;
         }
-
-        var injected = WebClientInjection.Inject(
-            html,
-            WebClientInjection.GetWebBasePath(
-                context.Request.PathBase.Value,
-                context.Request.Path.Value ?? string.Empty));
-        if (injected is null)
-        {
-            await _next(context).ConfigureAwait(false);
-            return;
-        }
-
-        var bytes = Encoding.UTF8.GetBytes(injected);
-        context.Response.StatusCode = StatusCodes.Status200OK;
-        context.Response.ContentType = "text/html; charset=utf-8";
-        context.Response.ContentLength = bytes.Length;
-        context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
-        await context.Response.Body.WriteAsync(bytes).ConfigureAwait(false);
-        _logger.LogDebug("Injected Manual Subtitle Extract client into Jellyfin Web");
     }
+
+    private static bool CanInject(HttpResponse response)
+        => response.StatusCode == StatusCodes.Status200OK
+            && (string.IsNullOrWhiteSpace(response.ContentType)
+                || response.ContentType.Contains("text/html", StringComparison.OrdinalIgnoreCase));
 }
 
 public sealed class ScriptInjectionStartupFilter : IStartupFilter

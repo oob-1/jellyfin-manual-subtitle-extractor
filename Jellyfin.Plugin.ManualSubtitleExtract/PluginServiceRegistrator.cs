@@ -4,6 +4,7 @@ using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Jellyfin.Plugin.ManualSubtitleExtract;
 
@@ -16,5 +17,6 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<SubtitleProbeService>();
         serviceCollection.AddSingleton<SubtitleExtractService>();
         serviceCollection.AddSingleton<IStartupFilter, ScriptInjectionStartupFilter>();
+        serviceCollection.AddSingleton<IHostedService, FileTransformationRegistrationService>();
     }
 }
