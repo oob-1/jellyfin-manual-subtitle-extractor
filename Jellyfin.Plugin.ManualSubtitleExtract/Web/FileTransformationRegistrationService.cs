@@ -20,7 +20,7 @@ public sealed class FileTransformationRegistrationService : BackgroundService
     {
         for (var attempt = 1; attempt <= 6 && !stoppingToken.IsCancellationRequested; attempt++)
         {
-            if (TryRegister())
+            if (TryRegister(_logger))
             {
                 return;
             }
@@ -38,7 +38,7 @@ public sealed class FileTransformationRegistrationService : BackgroundService
         _logger.LogInformation("File Transformation plugin was not available; Manual Subtitle Extract will use middleware injection only");
     }
 
-    private bool TryRegister()
+    public static bool TryRegister(ILogger logger)
     {
         try
         {
@@ -61,12 +61,12 @@ public sealed class FileTransformationRegistrationService : BackgroundService
             }
 
             registerMethod.Invoke(null, new[] { payload });
-            _logger.LogInformation("Registered Manual Subtitle Extract index.html transform with File Transformation");
+            logger.LogInformation("Registered Manual Subtitle Extract index.html transform with File Transformation");
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Could not register Manual Subtitle Extract with File Transformation yet");
+            logger.LogDebug(ex, "Could not register Manual Subtitle Extract with File Transformation yet");
             return false;
         }
     }

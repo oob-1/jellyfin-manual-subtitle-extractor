@@ -19,6 +19,7 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         : base(applicationPaths, xmlSerializer)
     {
         Instance = this;
+        logger.LogInformation("Manual Subtitle Extract plugin loaded");
 
         try
         {
