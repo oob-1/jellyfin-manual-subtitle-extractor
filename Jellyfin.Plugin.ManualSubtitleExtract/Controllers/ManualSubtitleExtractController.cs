@@ -1,90 +1,150 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Jellyfin.Plugin.ManualSubtitleExtract.Models;
 using Jellyfin.Plugin.ManualSubtitleExtract.Services;
-using MediaBrowser.Common.Api;
-using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Library;
-using MediaBrowser.Controller.Providers;
-using MediaBrowser.Model.IO;
-using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.ManualSubtitleExtract.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("ManualSubtitleExtract")]
-[Authorize(Policy = Policies.RequiresElevation)]
-public sealed class ManualSubtitleExtractController : ControllerBase
+public class ManualSubtitleExtractController : ControllerBase
 {
-    private readonly ILibraryManager _libraryManager;
-    private readonly SubtitleProbeService _probe;
-    private readonly SubtitleExtractService _extract;
-    private readonly IProviderManager _providerManager;
-    private readonly IFileSystem _fileSystem;
-    private readonly ILogger<ManualSubtitleExtractController> _logger;
+    private readonly SubtitleProbeService _probeService;
+    private readonly SubtitleExtractService _extractService;
 
     public ManualSubtitleExtractController(
-        ILibraryManager libraryManager,
-        SubtitleProbeService probe,
-        SubtitleExtractService extract,
-        IProviderManager providerManager,
-        IFileSystem fileSystem,
-        ILogger<ManualSubtitleExtractController> logger)
+        SubtitleProbeService probeService,
+        SubtitleExtractService extractService)
     {
-        _libraryManager = libraryManager;
-        _probe = probe;
-        _extract = extract;
-        _providerManager = providerManager;
-        _fileSystem = fileSystem;
-        _logger = logger;
+        _probeService = probeService;
+        _extractService = extractService;
     }
 
+    /// <summary>
+    /// Returns the embedded subtitle streams for a Jellyfin item.
+    /// </summary>
+    /// <param name="itemId">Jellyfin movie/episode item ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Embedded subtitle tracks.</returns>
     [HttpGet("{itemId:guid}/tracks")]
-    [ProducesResponseType(typeof(IReadOnlyList<SubtitleTrackDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(IReadOnlyList<SubtitleTrackDto>), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(500)]
     public async Task<ActionResult<IReadOnlyList<SubtitleTrackDto>>> GetTracks(
-        [FromRoute] Guid itemId,
+        Guid itemId,
         CancellationToken cancellationToken)
     {
-        var item = GetLocalItem(itemId);
-        var tracks = await _probe.GetTracksAsync(item.Path, cancellationToken).ConfigureAwait(false);
-        return Ok(tracks);
+        if (itemId == Guid.Empty)
+        {
+            return BadRequest("A valid Jellyfin item ID is required.");
+        }
+
+        try
+        {
+            var tracks = await _probeService
+                .GetTracksAsync(itemId, cancellationToken)
+                .ConfigureAwait(false);
+
+            return Ok(tracks);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(500, new
+            {
+                error = ex.Message
+            });
+        }
     }
 
+    /// <summary>
+    /// Extracts one embedded subtitle stream as an external sidecar subtitle.
+    /// </summary>
+    /// <param name="itemId">Jellyfin movie/episode item ID.</param>
+    /// <param name="request">Extraction request.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Extraction result.</returns>
     [HttpPost("{itemId:guid}/extract")]
-    [ProducesResponseType(typeof(ExtractSubtitleResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ExtractSubtitleResult), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(409)]
+    [ProducesResponseType(500)]
     public async Task<ActionResult<ExtractSubtitleResult>> Extract(
-        [FromRoute] Guid itemId,
+        Guid itemId,
         [FromBody] ExtractSubtitleRequest request,
         CancellationToken cancellationToken)
     {
-        var item = GetLocalItem(itemId);
-        var result = await _extract.ExtractAsync(item.Path, request.StreamIndex, request.Overwrite, cancellationToken).ConfigureAwait(false);
-
-        _logger.LogInformation("Extracted subtitle stream {StreamIndex} from {Path} to {Output}", request.StreamIndex, item.Path, result.OutputPath);
-
-        _providerManager.QueueRefresh(
-            item.Id,
-            new MetadataRefreshOptions(new DirectoryService(_fileSystem)),
-            RefreshPriority.High);
-
-        return Ok(result);
-    }
-
-    private BaseItem GetLocalItem(Guid itemId)
-    {
-        var item = _libraryManager.GetItemById<BaseItem>(itemId, User.GetUserId());
-        if (item is null)
+        if (itemId == Guid.Empty)
         {
-            throw new KeyNotFoundException("Jellyfin item was not found.");
+            return BadRequest("A valid Jellyfin item ID is required.");
         }
 
-        if (string.IsNullOrWhiteSpace(item.Path) || !System.IO.File.Exists(item.Path))
+        if (request is null)
         {
-            throw new InvalidOperationException("This item does not point to a local media file that the Jellyfin server can access.");
+            return BadRequest("Missing extraction request.");
         }
 
-        return item;
+        if (request.StreamIndex < 0)
+        {
+            return BadRequest("Subtitle stream index cannot be negative.");
+        }
+
+        try
+        {
+            var result = await _extractService
+                .ExtractAsync(
+                    itemId,
+                    request.StreamIndex,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(403, new
+            {
+                error = ex.Message
+            });
+        }
+        catch (System.IO.
+IOException ex)
+        {
+            return Conflict(new
+            {
+                error = ex.Message
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(500, new
+            {
+                error = ex.Message
+            });
+        }
     }
 }
