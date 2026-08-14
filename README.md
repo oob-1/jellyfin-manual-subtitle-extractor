@@ -93,7 +93,7 @@ The included workflow will:
 After the action finishes, your Jellyfin repository URL is:
 
 ```text
-https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY/main/manifest.json
+https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/jellyfin-manual-subtitle-extractor/main/manifest.json
 ```
 
 Add it in:
